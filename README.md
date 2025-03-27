@@ -181,3 +181,9 @@ If you want to **deploy** this setup:
 ## Acknowledgments
 
 This project builds upon the foundational work of the Whisper Streaming and Diart projects. We extend our gratitude to the original authors for their contributions.
+
+
+## cmd
+```bash
+python whisper_fastapi_online_server.py --model medium --backend faster-whisper --host 0.0.0.0 --port 8000 --confidence-validation
+```
