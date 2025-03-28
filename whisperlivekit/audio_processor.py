@@ -159,6 +159,7 @@ class AudioProcessor:
                 buffer_size = max(int(32000 * elapsed_time), 4096)
                 beg = time()
 
+                logger.info(f"Reading audio chunk, buffer_size: {buffer_size}")
                 # Read chunk with timeout
                 try:
                     chunk = await asyncio.wait_for(
@@ -175,6 +176,7 @@ class AudioProcessor:
                     logger.info("FFmpeg stdout closed.")
                     break
                     
+                logger.info(f"Received audio chunk of size: {len(chunk)}")
                 self.pcm_buffer.extend(chunk)
                         
                 # Send to diarization if enabled
@@ -185,6 +187,7 @@ class AudioProcessor:
 
                 # Process when we have enough data
                 if len(self.pcm_buffer) >= self.bytes_per_sec:
+                    logger.info(f"PCM buffer size: {len(self.pcm_buffer) / self.bytes_per_sec:.2f}s")
                     if len(self.pcm_buffer) > self.max_bytes_per_sec:
                         logger.warning(
                             f"Audio buffer too large: {len(self.pcm_buffer) / self.bytes_per_sec:.2f}s. "
@@ -197,7 +200,9 @@ class AudioProcessor:
                     
                     # Send to transcription if enabled
                     if self.args.transcription and self.transcription_queue:
+                        logger.info("Sending audio chunk to transcription queue")
                         await self.transcription_queue.put(pcm_array.copy())
+                        logger.info("Audio chunk sent to transcription queue")
                     
                     # Sleep if no processing is happening
                     if not self.args.transcription and not self.args.diarization:
@@ -220,26 +225,36 @@ class AudioProcessor:
                 logger.info(f"{len(self.online.audio_buffer) / self.online.SAMPLING_RATE} seconds of audio to process.")
                 
                 # Process transcription
+                logger.info("Inserting audio chunk into buffer...")
                 self.online.insert_audio_chunk(pcm_array)
+                logger.info("Processing audio with Whisper...")
                 new_tokens = self.online.process_iter()
+                logger.info(f"Received {len(new_tokens) if new_tokens else 0} new tokens from Whisper")
                 
                 if new_tokens:
+                    logger.info("Adding new tokens to transcription...")
                     self.full_transcription += self.sep.join([t.text for t in new_tokens])
+                    logger.info(f"Current transcription length: {len(self.full_transcription)} chars")
                     
                 # Get buffer information
+                logger.info("Getting buffer information...")
                 _buffer = self.online.get_buffer()
                 buffer = _buffer.text
                 end_buffer = _buffer.end if _buffer.end else (
                     new_tokens[-1].end if new_tokens else 0
                 )
+                logger.info(f"Buffer text length: {len(buffer) if buffer else 0} chars")
                 
                 # Avoid duplicating content
                 if buffer in self.full_transcription:
+                    logger.info("Buffer content already in transcription, clearing buffer")
                     buffer = ""
                     
+                logger.info("Updating transcription state...")
                 await self.update_transcription(
                     new_tokens, buffer, end_buffer, self.full_transcription, self.sep
                 )
+                logger.info("Transcription state updated successfully")
                 
             except Exception as e:
                 logger.warning(f"Exception in transcription_processor: {e}")

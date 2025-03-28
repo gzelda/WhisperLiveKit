@@ -61,27 +61,41 @@ class HypothesisBuffer:
         between the previous hypothesis and the new tokens.
         """
         committed: List[ASRToken] = []
+        logger.info(f"Starting flush with {len(self.new)} new tokens and {len(self.buffer)} buffer tokens")
+        
         while self.new:
             current_new = self.new[0]
+            logger.info(f"Processing token: '{current_new.text}' (prob: {current_new.probability if current_new.probability else 'None'})")
+            
             if self.confidence_validation and current_new.probability and current_new.probability > 0.95:
+                logger.info(f"Token committed by confidence validation (prob: {current_new.probability})")
                 committed.append(current_new)
                 self.last_committed_word = current_new.text
                 self.last_committed_time = current_new.end
                 self.new.pop(0)
                 self.buffer.pop(0) if self.buffer else None
             elif not self.buffer:
+                logger.info("No buffer tokens to compare against, breaking")
                 break
             elif current_new.text == self.buffer[0].text:
+                logger.info(f"Token committed by matching buffer: '{current_new.text}'")
                 committed.append(current_new)
                 self.last_committed_word = current_new.text
                 self.last_committed_time = current_new.end
                 self.buffer.pop(0)
                 self.new.pop(0)
             else:
+                logger.info(f"Token mismatch: new='{current_new.text}' vs buffer='{self.buffer[0].text if self.buffer else 'None'}'")
                 break
+                
+        logger.info(f"Committed {len(committed)} tokens, {len(self.new)} tokens remaining")
         self.buffer = self.new
         self.new = []
         self.committed_in_buffer.extend(committed)
+        
+        if committed:
+            logger.info(f"Committed text: '{' '.join(t.text for t in committed)}'")
+        
         return committed
 
     def pop_committed(self, time: float):
@@ -186,28 +200,41 @@ class OnlineASRProcessor:
         Returns a Transcript object representing the committed transcript.
         """
         prompt_text, _ = self.prompt()
-        logger.debug(
+        logger.info(
             f"Transcribing {len(self.audio_buffer)/self.SAMPLING_RATE:.2f} seconds from {self.buffer_time_offset:.2f}"
         )
+        logger.info("Starting Whisper transcription...")
         res = self.asr.transcribe(self.audio_buffer, init_prompt=prompt_text)
+        logger.info("Whisper transcription completed, extracting words...")
+        
         tokens = self.asr.ts_words(res)  # Expecting List[ASRToken]
+        logger.info(f"Extracted {len(tokens)} tokens from Whisper")
+        
+        logger.info("Inserting tokens into buffer...")
         self.transcript_buffer.insert(tokens, self.buffer_time_offset)
+        
+        logger.info("Flushing committed tokens...")
         committed_tokens = self.transcript_buffer.flush()
         self.committed.extend(committed_tokens)
+        
         completed = self.concatenate_tokens(committed_tokens)
-        logger.debug(f">>>> COMPLETE NOW: {completed.text}")
+        logger.info(f">>>> COMPLETE NOW: {completed.text}")
         incomp = self.concatenate_tokens(self.transcript_buffer.buffer)
-        logger.debug(f"INCOMPLETE: {incomp.text}")
+        logger.info(f"INCOMPLETE: {incomp.text}")
 
         if committed_tokens and self.buffer_trimming_way == "sentence":
+            logger.info("Checking if sentence chunking is needed...")
             if len(self.audio_buffer) / self.SAMPLING_RATE > self.buffer_trimming_sec:
+                logger.info("Performing sentence chunking...")
                 self.chunk_completed_sentence()
 
         s = self.buffer_trimming_sec if self.buffer_trimming_way == "segment" else 30
         if len(self.audio_buffer) / self.SAMPLING_RATE > s:
+            logger.info("Performing segment chunking...")
             self.chunk_completed_segment(res)
-            logger.debug("Chunking segment")
-        logger.debug(
+            logger.info("Segment chunking completed")
+            
+        logger.info(
             f"Length of audio buffer now: {len(self.audio_buffer)/self.SAMPLING_RATE:.2f} seconds"
         )
         return committed_tokens
